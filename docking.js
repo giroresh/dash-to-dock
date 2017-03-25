@@ -424,22 +424,20 @@ const DockedDash = new Lang.Class({
         this._slider.add_child(this._box);
         this._box.add_actor(this.dash.actor);
 
-        // Add aligning container without tracking it for input region (old affectsinputRegion: false that was removed).
-        // The public method trackChrome requires the actor to be child of a tracked actor. Since I don't want the parent
-        // to be tracked I use the private internal _trackActor instead.
+        // Add aligning container without tracking it for input region
         Main.uiGroup.add_child(this.actor);
 
-        if (this._settings.get_boolean('dock-fixed'))
-            Main.layoutManager._trackActor(this._slider.actor, {affectsStruts: true, trackFullscreen: true});
+        if (this._settings.get_boolean('dock-fixed')) {
+            // Note: tracking the fullscreen directly on the slider actor causes some hiccups when fullscreening
+            // windows of certain applications
+            Main.layoutManager._trackActor(this.actor, {affectsInputRegion: false, trackFullscreen: true});
+            Main.layoutManager._trackActor(this._slider.actor, {affectsStruts: true});
+        }
         else
             Main.layoutManager._trackActor(this._slider.actor);
 
         // Keep the dash below the modalDialogGroup
         Main.layoutManager.uiGroup.set_child_below_sibling(this.actor,Main.layoutManager.modalDialogGroup);
-
-        // pretend this._slider is isToplevel child so that fullscreen is actually tracked
-        let index = Main.layoutManager._findActor(this._slider.actor);
-        Main.layoutManager._trackedActors[index].isToplevel = true;
 
         // Set initial position
         this._resetPosition();
@@ -559,9 +557,12 @@ const DockedDash = new Lang.Class({
         this._settings.connect('changed::dock-fixed', Lang.bind(this, function() {
 
             if (this._settings.get_boolean('dock-fixed')) {
+                Main.layoutManager._untrackActor(this.actor);
+                Main.layoutManager._trackActor(this.actor, {affectsInputRegion: false, trackFullscreen: true});
                 Main.layoutManager._untrackActor(this._slider.actor);
-                Main.layoutManager._trackActor(this._slider.actor, {affectsStruts: true, trackFullscreen: true});
+                Main.layoutManager._trackActor(this._slider.actor, {affectsStruts: true});
             } else {
+                Main.layoutManager._untrackActor(this.actor);
                 Main.layoutManager._untrackActor(this._slider.actor);
                 Main.layoutManager._trackActor(this._slider.actor);
              }
@@ -1260,10 +1261,9 @@ const DockedDash = new Lang.Class({
                 // runs if we are already inside the overview.
                 if (!Main.overview._shown) {
                     this.forcedOverview = true;
+                    let view = Main.overview.viewSelector.appDisplay._views[visibleView].view;
+                    let grid = view._grid;
                     if (animate) {
-                        let view = Main.overview.viewSelector.appDisplay._views[visibleView].view;
-                        let grid = view._grid;
-
                         // Animate in the the appview, hide the appGrid to avoiud flashing
                         // Go to the appView before entering the overview, skipping the workspaces.
                         // Do this manually avoiding opacity in transitions so that the setting of the opacity
@@ -1287,6 +1287,12 @@ const DockedDash = new Lang.Class({
                             }));
                         }));
                     }
+                    else {
+                        Main.overview.viewSelector._activePage = Main.overview.viewSelector._appsPage;
+                        Main.overview.viewSelector._activePage.show();
+                        grid.actor.opacity = 255;
+                    }
+
                 }
 
                 // Finally show the overview

@@ -140,6 +140,16 @@ const MyAppIcon = new Lang.Class({
     },
 
     onScrollEvent: function(actor, event) {
+
+        // We only activate windows of running applications, i.e. we never open new windows
+        // We check if the app is running, and that the # of windows is > 0 in
+        // case we use workspace isolation,
+        let appIsRunning = this.app.state == Shell.AppState.RUNNING
+            && getInterestingWindows(this.app, this._dtdSettings).length > 0;
+
+        if (!appIsRunning)
+            return false
+
         if (this._optionalScrollCycleWindowsDeadTimeId > 0)
             return false;
         else
@@ -166,15 +176,17 @@ const MyAppIcon = new Lang.Class({
         }
 
         let focusedApp = tracker.focus_app;
-        if (!Main.overview._shown){
+        if (!Main.overview._shown) {
             let reversed = direction === Meta.MotionDirection.UP;
             if (this.app == focusedApp)
                 cycleThroughWindows(this.app, this._dtdSettings, reversed);
             else {
                 // Activate the first window
                 let windows = getInterestingWindows(this.app, this._dtdSettings);
-                let w = windows[0];
-                Main.activateWindow(w);
+                if (windows.length > 0) {
+                    let w = windows[0];
+                    Main.activateWindow(w);
+                }
             }
         }
         else
@@ -406,7 +418,7 @@ const MyAppIcon = new Lang.Class({
 
             case clickAction.LAUNCH:
                 this.animateLaunch();
-                this.app.open_new_window(-1);
+                appLaunchNewWindow(this.app);
                 break;
 
             case clickAction.QUIT:
@@ -420,7 +432,7 @@ const MyAppIcon = new Lang.Class({
         }
         else {
             this.animateLaunch();
-            this.app.open_new_window(-1);
+            appLaunchNewWindow(this.app);
         }
 
         Main.overview.hide();
@@ -613,12 +625,39 @@ function closeAllWindows(app, settings) {
         windows[i].delete(global.get_current_time());
 }
 
+/*
+* This is used as a workaround for a bug resulting in no new windows being opened
+* for certain running applications when calling open_new_window().
+*
+* https://bugzilla.gnome.org/show_bug.cgi?id=756844
+*
+* Similar to what done when generating the popupMenu entries, if the application provides
+*  a "New Window" action, use it instead of direclt requesting a new window with
+* open_new_window(), which fails for certain application, notably Nautilus.
+*/
+function appLaunchNewWindow(app) {
+    let appInfo = app.get_app_info();
+    let actions = appInfo.list_actions();
+    if (actions.indexOf('new-window') == -1) {
+        app.open_new_window(-1);
+    }
+    else {
+        i = actions.indexOf('new-window');
+        if (i !== -1)
+            app.launch_action(actions[i], global.get_current_time(), -1);
+
+    }
+}
+
 function cycleThroughWindows(app, settings, reversed) {
     // Store for a little amount of time last clicked app and its windows
     // since the order changes upon window interaction
     let MEMORY_TIME=3000;
 
     let app_windows = getInterestingWindows(app, settings);
+
+    if (app_windows.length <1)
+        return
 
     if (recentlyClickedAppLoopId > 0)
         Mainloop.source_remove(recentlyClickedAppLoopId);
@@ -714,6 +753,20 @@ const MyAppIconMenu = new Lang.Class({
                         this.emit('activate-window', null);
                     }));
                     this._appendSeparator();
+                }
+
+
+                if (AppDisplay.discreteGpuAvailable &&
+                    this._source.app.state == Shell.AppState.STOPPED &&
+                    actions.indexOf('activate-discrete-gpu') == -1) {
+                    this._onDiscreteGpuMenuItem = this._appendMenuItem(_("Launch using Dedicated Graphics Card"));
+                    this._onDiscreteGpuMenuItem.connect('activate', Lang.bind(this, function() {
+                        if (this._source.app.state == Shell.AppState.STOPPED)
+                            this._source.animateLaunch();
+
+                        this._source.app.launch(0, -1, true);
+                        this.emit('activate-window', null);
+                    }));
                 }
 
                 for (let i = 0; i < actions.length; i++) {
